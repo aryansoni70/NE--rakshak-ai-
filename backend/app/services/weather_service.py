@@ -1,11 +1,16 @@
 """
 Weather Ingestion Service:
-Integrates with Open-Meteo API for live North Eastern Region districts with instant caching.
+Integrates with Open-Meteo API (free, no key required), with optional
+support for WeatherAPI and OpenWeatherMap keys for fallback/validation.
 """
 
+import os
 import requests
 from datetime import datetime
 from typing import Dict, Any, List
+from dotenv import load_dotenv
+
+load_dotenv()
 
 DISTRICT_COORDINATES = {
     "Guwahati / Kamrup": {"lat": 26.1445, "lng": 91.7362, "state": "Assam", "rain": 14.5, "temp": 28.0, "elev": 55},
@@ -24,6 +29,8 @@ class WeatherService:
     def __init__(self):
         self.snapshots: Dict[str, Dict[str, Any]] = {}
         self.simulation_overrides: Dict[str, float] = {}
+        self.weatherapi_key = os.environ.get("WEATHERAPI_KEY")
+        self.openweather_key = os.environ.get("OPENWEATHER_API_KEY")
         self._init_baseline_cache()
 
     def _init_baseline_cache(self):
@@ -39,17 +46,44 @@ class WeatherService:
                 "humidity_pct": 82.0,
                 "wind_speed_kmh": 14.0,
                 "is_simulated": False,
+                "source": "Open-Meteo Baseline Cache",
                 "recorded_at": datetime.now().isoformat()
             }
 
     def initialize_weather(self, sync_live=False):
-        """Optional live sync with Open-Meteo"""
-        if not sync_live:
-            return
+        """Live sync with Open-Meteo or WeatherAPI if configured"""
         for district, coords in DISTRICT_COORDINATES.items():
+            # If user provided WeatherAPI key, use it
+            if self.weatherapi_key:
+                try:
+                    url = f"https://api.weatherapi.com/v1/forecast.json?key={self.weatherapi_key}&q={coords['lat']},{coords['lng']}&days=2"
+                    resp = requests.get(url, timeout=1.5)
+                    if resp.status_code == 200:
+                        d = resp.json()
+                        curr = d.get("current", {})
+                        forecast = d.get("forecast", {}).get("forecastday", [{}])[0].get("day", {})
+                        self.snapshots[district] = {
+                            "district": district,
+                            "state": coords["state"],
+                            "lat": coords["lat"],
+                            "lng": coords["lng"],
+                            "temperature_c": float(curr.get("temp_c", coords["temp"])),
+                            "rainfall_24h_mm": float(curr.get("precip_mm", coords["rain"])),
+                            "rainfall_forecast_mm": float(forecast.get("totalprecip_mm", coords["rain"] * 1.3)),
+                            "humidity_pct": float(curr.get("humidity", 80.0)),
+                            "wind_speed_kmh": float(curr.get("wind_kph", 12.0)),
+                            "is_simulated": False,
+                            "source": "WeatherAPI Live",
+                            "recorded_at": datetime.now().isoformat()
+                        }
+                        continue
+                except Exception:
+                    pass
+
+            # Default Open-Meteo Free API
             try:
                 url = f"https://api.open-meteo.com/v1/forecast?latitude={coords['lat']}&longitude={coords['lng']}&current=temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m&daily=precipitation_sum&timezone=Asia%2FKolkata&forecast_days=2"
-                resp = requests.get(url, timeout=1.2)
+                resp = requests.get(url, timeout=1.5)
                 if resp.status_code == 200:
                     d = resp.json()
                     curr = d.get("current", {})
@@ -66,6 +100,7 @@ class WeatherService:
                         "humidity_pct": float(curr.get("relative_humidity_2m", 80.0)),
                         "wind_speed_kmh": float(curr.get("wind_speed_10m", 12.0)),
                         "is_simulated": False,
+                        "source": "Open-Meteo Live",
                         "recorded_at": datetime.now().isoformat()
                     }
             except Exception:

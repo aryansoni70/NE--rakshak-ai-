@@ -7,10 +7,14 @@ live road states (open/caution/blocked), and multi-criteria route optimization.
 import json
 import os
 import heapq
+import requests
 from typing import Dict, Any, List, Optional, Tuple
+from dotenv import load_dotenv
 from backend.app.services.weather_service import weather_service
 from backend.app.services.risk_service import risk_service
 from backend.app.services.eta_service import eta_service
+
+load_dotenv()
 
 # Detailed waypoint coordinates representing authentic North Eastern corridors
 CORRIDOR_WAYPOINTS = {
@@ -120,6 +124,8 @@ class RoutingService:
         self.nodes: Dict[str, Dict[str, Any]] = {}
         self.roads: Dict[str, Dict[str, Any]] = {}
         self.road_blockages: Dict[str, str] = {}  # road_id -> reason
+        self.ors_key = os.environ.get("OPENROUTESERVICE_API_KEY")
+        self.google_key = os.environ.get("GOOGLE_MAPS_API_KEY")
         self.load_graph()
 
     def load_graph(self):
